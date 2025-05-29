@@ -10,12 +10,12 @@ import re # Added for sanitizing folder name for logs
 
 # Define an Enum for document types
 class DocumentType(str, Enum):
-    LETTER = "letter"
     INVOICE = "invoice"
-    TAXES = "taxes"
-    STATEMENT = "statement"
-    FORM = "form"
     RECEIPT = "receipt"
+    STATEMENT = "statement"
+    LETTER = "letter"
+    TAXES = "taxes"
+    FORM = "form"
     REPORT = "report"
     OTHER = "other"
     ERROR = "Error" # For fallback cases
@@ -42,7 +42,7 @@ class LetterLLMResponse(BaseModel):
 # Helper function to sanitize folder names, similar to the one in output.py
 # but can be kept local to llm.py or moved to a common utils.py
 def _sanitize_foldername_llm(name: str) -> str:
-    """Sanitizes a string to be a valid folder name for LLM log paths."""
+    """Sanitizes a string to be a valid folder name for LLM log paths. """
     if not name or name.strip() == "":
         name = "UnknownSender_LLMLog" # Default for logging if sender unknown early
     name = re.sub(r'[^\w\s-]', '', name).strip()
@@ -57,7 +57,7 @@ def _log_llm_interaction(
     error_details: Optional[dict] = None,
     final_sender_name_for_path: str = "UnknownSender_LLMLog" # Pass the determined sender name
 ):
-    """Helper function to log LLM request, response, and errors to a JSON file."""
+    """Helper function to log LLM request, response, and errors to a JSON file. """
     try:
         # Use the provided sender name for the path, sanitized
         sane_sender_folder = _sanitize_foldername_llm(final_sender_name_for_path)
@@ -115,14 +115,14 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
     system_prompt_parts = [
         "You are an AI assistant expert at extracting structured information from documents. "
         "Analyze the provided OCR generated text and QR codes. Populate all fields of the LetterLLMResponse schema accurately. ",
-        "For the 'sender' field, provide the sender's name in a simple, concise, and folder-friendly format (e.g., 'Belastingdienst' instead of 'Belasting-dienst Amersfoort'). Avoid special characters that are problematic for directory names.",
+        "For the 'sender' field, provide the sender's name in a simple, concise, and folder-friendly format (e.g., 'Belastingdienst' instead of 'Belasting-dienst Amersfoort'). Avoid special characters that are problematic for directory names. ",
         "The 'type' field must be one of the following: " + ", ".join([t.value for t in DocumentType if t != DocumentType.ERROR]) + ". ",
-        "For the 'explicit_document_id' field, extract any specific document identifier like 'Invoice No.', 'Reference #', 'Document ID', 'Betalingskenmerk', 'Factuurnummer' found directly on the letter. This should be an ID for the letter/document itself, not a general customer account number or BSN. If no such specific document ID is found, set this field to null or omit it.",
-        "For the 'payment' field: If payment information (like amount, IBAN, due date) is present, this field MUST be an OBJECT containing sub-fields like 'amount', 'iban', 'due_date'. For example: \"payment\": {\"amount\": 123.45, \"iban\": \"NL00ABCD1234567890\", \"due_date\": \"2024-12-31\"}. If no payment information is found, the 'payment' field MUST be null. DO NOT put a simple string or number (e.g., '€ 4.459') directly into the 'payment' field itself; that value should go into the 'amount' sub-field WITHIN the 'payment' object.",
+        "For the 'explicit_document_id' field, extract any specific document identifier like 'Invoice No.', 'Reference #', 'Document ID', 'Betalingskenmerk', 'Factuurnummer' found directly on the letter. This should be an ID for the letter/document itself, not a general customer account number or BSN. If no such specific document ID is found, set this field to null or omit it. ",
+        "For the 'payment' field: If payment information (like amount, IBAN, due date) is present, this field MUST be an OBJECT containing sub-fields like 'amount', 'iban', 'due_date'. For example: \"payment\": {\"amount\": 123.45, \"iban\": \"NL00ABCD1234567890\", \"due_date\": \"2024-12-31\"}. If no payment information is found, the 'payment' field MUST be null. DO NOT put a simple string or number (e.g., '€ 4.459') directly into the 'payment' field itself; that value should go into the 'amount' sub-field WITHIN the 'payment' object. ",
         "Pay close attention to the multi-page document instructions if provided. ",
-        "Returning content corrected and cleaned of any OCR artifacts or other errors. Format it neatly",
-        "Return the content as as markdown. Do not label it, do not add \"```\".",
-        "Return any labels, id's, or other scannable or suspected tabular data as neatly formatted tabbed labels and values. These are placed in context where you found them.",
+        "'content': Returning content corrected and cleaned of any OCR artifacts or other errors. Format it neatly and spelled validely. ",
+        "Return the content as as markdown. Do not label it, do not add \"```\". ",
+        "Return any labels, id's, or other scannable or suspected tabular data as neatly formatted tabbed labels and values. These are placed in context where you found them. ",
         "If there is a sequence of characters, a part of the scan that is clearly jibberish from poor OCR recognition, or a part of the scan that is clearly not a letter, you may gather all these at the end of the content "
 
     ]
@@ -136,10 +136,16 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
 
     if open_docs_summary:
         system_prompt_parts.extend([
+                "\nMulti-page document parameters:",
+                "- 'is_multipage_explicit': Set to true if the page explicitly mentions being part of a multi-page document (e.g., 'page 1 of 2', 'continued on next page'). Otherwise, false. ",
+                "- 'is_information_complete': Set to false if the text seems obviously cut off or incomplete and it is safe to assume its part of more pages. Otherwise, true. ",
+                "- 'belongs_to_open_doc_id': If this page belongs to one of the multipage candidates listed below, set this to the ID of that document. Otherwise, set it to null. Sender and date needs to be the same, this is a sure indicator. If there is a message / correspondence ID this is a sure indicator. ",
+
                 "\nMulti-page document considerations:",
-                "- 'is_multipage_explicit': Set to true if the page explicitly mentions being part of a multi-page document (e.g., 'page 1 of 2', 'continued on next page'). Otherwise, false.",
-                "- 'is_information_complete': Set to false if the text seems obviously cut off or incomplete and it is safe to assume its part of more pages. Otherwise, true.",
-                "- 'belongs_to_open_doc_id': If this page belongs to one of the multipage candidates listed below, set this to the ID of that document. Otherwise, set it to null.  If the sender and date is the same this is a strong indicator. If there is a message / correspondence ID this is a sure indicator."
+                "If one of the pages says [page number] of [total pages], ensure the matched document mentions the same number of pages. Page 1 of 2 cant match with page 1 of 3 (as that page is already found is taken), it cant match with page 2 of 2 (as that total pages does not match). It can only match with page 2 of 3 and 3 of 3. ",
+                "The date of the document should be the same for all pages. If the date is not the same, it is a sure indicator that it does not match. ",
+                "",
+                "",
             ])
 
         user_prompt_parts.append("\nCurrent multipage candidates:")
@@ -147,16 +153,16 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
         if not open_docs_summary:
             user_prompt_parts.append("  (None)")
         for open_doc in open_docs_summary:
-            user_prompt_parts.append(f"  - ID: {open_doc['id']}, Subject: {open_doc['subject']}, Snippet: {open_doc['content_snippet']}...")
+            user_prompt_parts.append(f"  - ID: {open_doc['id']}, Subject: {open_doc['subject']}, Snippet: {open_doc['content_snippet']}... ")
     else:
-        user_prompt_parts.append("\nNo documents are currently open and awaiting more pages.")
+        user_prompt_parts.append("\nNo documents are currently open and awaiting more pages. ")
 
     if existing_sender_folders:
         user_prompt_parts.append("\nConsider these existing sender names/folders when determining the sender (try to be consistent if a similar sender already exists):")
         for folder_name in existing_sender_folders:
             user_prompt_parts.append(f"  - {folder_name}")
     else:
-        user_prompt_parts.append("\nNo existing sender folders found to consider for sender name consistency.")
+        user_prompt_parts.append("\nNo existing sender folders found to consider for sender name consistency. ")
 
     # Combine system and user prompts into one string for the LLM
     system_prompt = "\n".join(system_prompt_parts)
@@ -194,7 +200,7 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
 
         result = completion.choices[0].message.parsed
         if not result: # Should not happen if no refusal and parse is successful
-             raise ValueError("LLM returned no parsed data despite no refusal.")
+             raise ValueError("LLM returned no parsed data despite no refusal. ")
 
         # Ensure our doc_id is used, overriding any ID from the LLM
         result.id = doc_id
@@ -266,11 +272,11 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
     if returned_response_object is None:
         # This case should ideally not be reached if logic is correct,
         # but as a safeguard, create a very generic error and log it.
-        print(f"CRITICAL: returned_response_object is None for {doc_id} after try-except-finally. Defaulting to error.")
+        print(f"CRITICAL: returned_response_object is None for {doc_id} after try-except-finally. Defaulting to error. ")
         critical_error_data = {
             "id": doc_id, "sender": "System", "date_sent": "Unknown",
             "subject": "Critical internal error in LLM processing",
-            "type": DocumentType.ERROR, "content": "Failed to produce a response object.",
+            "type": DocumentType.ERROR, "content": "Failed to produce a response object. ",
             "qr_payloads": qr_payloads, "payment": None,
             "is_multipage_explicit": False, "is_information_complete": True,
             "belongs_to_open_doc_id": None
