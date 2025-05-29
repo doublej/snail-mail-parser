@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pathlib import Path
+from typing import List # ADDED THIS IMPORT
 
 class Settings(BaseSettings):
     scan_dir: Path             # Directory to monitor for new files
@@ -28,6 +29,10 @@ class Settings(BaseSettings):
     facsimile_item_notes_placeholder: str = "-" # Placeholder for item.notes
     facsimile_item_margot_comment_placeholder: str = "-" # Placeholder for item.margot_comment
 
+    # NEW FIELD FOR ANONYMIZATION
+    anonymization_pairs: List[List[str]] = [] 
+    # Example .env entry:
+    # APP_ANONYMIZATION_PAIRS='[["John Doe", "PERSON_A"], ["Acme Corp", "COMPANY_X"]]'
 
     model_config = SettingsConfigDict(
         env_file=".env",
