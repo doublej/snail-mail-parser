@@ -96,63 +96,36 @@ def _anonymize_text(text: str, anonymization_pairs: List[List[str]]) -> str:
         return text
     
     modified_text = text
-    print(f"DEBUG _anonymize_text: Initial text snippet: {text[:100]}") 
     # Sort pairs by length of original string in descending order to prevent partial replacements
     # e.g., replace "John Doe" before "John"
     sorted_pairs = sorted(anonymization_pairs, key=lambda x: len(x[0]) if isinstance(x, list) and len(x) > 0 else 0, reverse=True)
 
     for pair_idx, pair in enumerate(sorted_pairs): 
-        print(f"DEBUG _anonymize_text: Processing pair #{pair_idx}: {pair}") 
         if len(pair) == 2:
             search_str, replace_str = pair
             try:
-                # Check if search_str (case-insensitive) is in modified_text before attempting sub
-                if re.search(re.escape(search_str), modified_text, flags=re.IGNORECASE):
-                    print(f"DEBUG _anonymize_text: Found '{search_str}' (case-insensitive) in text. Attempting replacement with '{replace_str}'.")
-                
-                temp_text_before_sub = modified_text # For comparison
                 # Added word boundaries \b to avoid partial replacements within words
                 modified_text = re.sub(r'\b' + re.escape(search_str) + r'\b', replace_str, modified_text, flags=re.IGNORECASE) 
-                
-                if temp_text_before_sub != modified_text:
-                    print(f"DEBUG _anonymize_text: Replacement made for '{search_str}'. Snippet after this rule: {modified_text[:100]}")
-                else:
-                    print(f"DEBUG _anonymize_text: No replacement made for '{search_str}' with this rule (it might not have been found, or search/replace are identical, or word boundaries prevented it).")
-
             except re.error as e:
                 print(f"Warning: Regex error during anonymization for search string '{search_str}': {e}")
         else:
             print(f"Warning: Invalid anonymization pair format: {pair}. Skipping.")
     
-    print(f"DEBUG _anonymize_text: Final text snippet after all pairs: {modified_text[:100]}") 
     return modified_text
 
 def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, open_docs_summary: Optional[List[dict]] = None) -> LetterLLMResponse:
     """
     Send OCR text and QR payloads to LLM and parse the JSON response into a LetterLLMResponse.
     """
-    print(f"CRITICAL_DEBUG: classify_document called for doc_id: {doc_id}. Anonymization pairs from settings: {getattr(settings, 'anonymization_pairs', 'NOT_FOUND')}")
     # Initialize OpenAI client (for v1.0.0+ SDK)
     client = OpenAI(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
     )
 
-    # <<< START OF ANONYMIZATION AND DEBUGGING BLOCK >>>
-    print(f"DEBUG LLM classify_document: doc_id={doc_id}")
-    # Use getattr to safely access anonymization_pairs, defaulting to None or an empty list if not present
+    # Use getattr to safely access anonymization_pairs, defaulting to an empty list if not present
     current_anonymization_pairs = getattr(settings, 'anonymization_pairs', [])
-    print(f"DEBUG LLM settings.anonymization_pairs: {current_anonymization_pairs}") 
     
-    text_lower_for_check = text.lower() # Check original text
-    # Example check for "smit", adapt if you have a specific term you expect to be anonymized
-    if "smit" in text_lower_for_check: 
-        print(f"DEBUG LLM: 'smit' (case-insensitive) FOUND in raw text for doc_id {doc_id}.")
-        start_index = text_lower_for_check.find("smit")
-        print(f"DEBUG LLM: Context: ...{text[max(0, start_index-30):start_index+30]}...")
-    else:
-        print(f"DEBUG LLM: 'smit' (case-insensitive) NOT FOUND in raw text for doc_id {doc_id}.")
-
     original_text = text # Keep original for logging and comparison
     if current_anonymization_pairs: # Check if there are any pairs to process
         print(f"LLM: Applying {len(current_anonymization_pairs)} anonymization rule(s) to text for doc_id {doc_id}.")
@@ -163,12 +136,8 @@ def classify_document(text: str, qr_payloads: List[str], doc_id: str, settings, 
             print(f"LLM: Text anonymized for doc_id {doc_id}. Original snippet: '{original_text_snippet_for_log}...', Anonymized snippet: '{anonymized_text_snippet_for_log}...'")
         else:
             print(f"LLM: Anonymization rules applied, but no changes made to the text snippet for doc_id {doc_id}.")
-            # If "smit" was expected to be replaced, and this message appears, let's check the anonymized text directly for "smit"
-            if "smit" in original_text_snippet_for_log.lower() and "smit" in anonymized_text_snippet_for_log.lower():
-                 print(f"DEBUG LLM: 'smit' was in original snippet and STILL in anonymized snippet for doc_id {doc_id}. Anonymization for 'smit' might have failed within _anonymize_text (e.g. due to word boundaries or rule issues).")
     else:
         print(f"LLM: No anonymization rules found or applied for doc_id {doc_id}.")
-    # <<< END OF ANONYMIZATION AND DEBUGGING BLOCK >>>
 
     response_log_data = {}
     error_log_details = {}
