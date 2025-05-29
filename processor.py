@@ -23,15 +23,45 @@ class Processor:
     def __init__(self, settings, queue: Queue):
         self.settings = settings
         self.queue = queue
-        self.doc_seq = 0
-        # Stores doc_id -> {'letter_data': LetterLLMResponse, 'items_to_save': List[Union[Path, Image.Image]], 'preprocessed_ocr_images': List[np.ndarray], 'raw_ocr_text_content': str}
+        self.doc_sequences: Dict[str, int] = {} # Stores date_str (YYYYMMDD) -> sequence_num
+        self.llm_request_seq: int = 0 # Counter for unique LLM request IDs
+        # Stores doc_id -> {'letter_data': LetterLLMResponse, 
+        #                   'items_to_save': List[Union[Path, Image.Image]], 
+        #                   'preprocessed_ocr_images': List[np.ndarray], 
+        #                   'raw_ocr_text_content': str,
+        #                   'merged_page_constituent_infos': List[Dict[str,str]]}
         self.open_documents = {}  
         # self.document_timeout_s removed
 
-    def get_new_doc_id(self) -> str:
-        """Generate a new document ID: YYYYMMDD-XXXX sequence."""
-        self.doc_seq += 1
-        return f"{datetime.now().strftime('%Y%m%d')}-{self.doc_seq:04d}"
+    def _get_llm_request_id(self) -> str:
+        """Generates a unique ID for an LLM processing request."""
+        self.llm_request_seq += 1
+        return f"req_{datetime.now().strftime('%Y%m%d%H%M%S')}_{self.llm_request_seq:03d}"
+
+    def get_new_doc_id(self, document_date_str: Optional[str] = None) -> str:
+        """
+        Generate a new document ID: YYYYMMDD-XXXX sequence.
+        The YYYYMMDD part is based on the document_date_str if provided and valid,
+        otherwise defaults to the current system date.
+        """
+        doc_date = None
+        if document_date_str and document_date_str != "Unknown":
+            try:
+                # LLM is prompted for "YYYY-MM-DD"
+                doc_date = datetime.strptime(document_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                print(f"Warning: Could not parse document date string '{document_date_str}'. Defaulting to current date for ID.")
+                doc_date = datetime.now().date()
+        else:
+            doc_date = datetime.now().date()
+        
+        date_prefix_for_id = doc_date.strftime('%Y%m%d')
+        
+        current_seq_for_date = self.doc_sequences.get(date_prefix_for_id, 0)
+        current_seq_for_date += 1
+        self.doc_sequences[date_prefix_for_id] = current_seq_for_date
+        
+        return f"{date_prefix_for_id}-{current_seq_for_date:04d}"
 
     def _prepare_open_documents_summary(self):
         summary = []
@@ -116,34 +146,35 @@ class Processor:
         text_all = text_all.strip()  # Remove leading/trailing whitespace from aggregated text
 
         if not text_all and not qr_payloads:
-            print(f"Processor: No text or QR codes found for page {current_page_path}. Skipping.")
+            print(f"Processor: No text or QR codes found for {current_page_path.name}. Skipping.")
             return
 
-        # Generate a candidate ID for this new page.
-        # This ID will become the document's ID if it's a new document,
-        # or it might be superseded if this page belongs to an existing open document.
-        candidate_page_id = self.get_new_doc_id()
+        # Generate a temporary ID for this specific LLM request.
+        llm_request_id = self._get_llm_request_id()
 
         open_docs_summary = self._prepare_open_documents_summary()
 
-        print(f"Processor: Classifying page {candidate_page_id} with LLM. Open docs summary: {len(open_docs_summary)}")
+        print(f"Processor: Classifying content from {current_page_path.name} (LLM Request ID: {llm_request_id}). Open docs summary: {len(open_docs_summary)}")
         llm_response = classify_document(
             text_all,
             qr_payloads,
-            candidate_page_id, # Pass the new page's candidate ID
+            llm_request_id, # Pass the temporary request ID to LLM for logging and initial response.id
             self.settings,
             open_docs_summary
         )
 
-        # Ensure the ID from LLM response is the one we manage, not one LLM might make up for the current page.
-        # The llm_response.id should be the candidate_page_id we sent.
-        # If belongs_to_open_doc_id is set, that takes precedence for document identity.
-
-        final_doc_id_to_process = llm_response.id # This should be candidate_page_id
+        # llm_response.id is currently llm_request_id.
+        # Now, generate the actual, potentially date-aware document ID.
+        actual_doc_id = self.get_new_doc_id(document_date_str=llm_response.date_sent)
+        
+        # Store the original ID used for the LLM request (for log finding)
+        # and then update llm_response.id to the actual_doc_id.
+        original_llm_request_id = llm_response.id # This is llm_request_id
+        llm_response.id = actual_doc_id # Update to the final document ID
 
         if llm_response.belongs_to_open_doc_id and llm_response.belongs_to_open_doc_id in self.open_documents:
-            existing_doc_id = llm_response.belongs_to_open_doc_id
-            print(f"Processor: Page {candidate_page_id} (LLM ID: {llm_response.id}) belongs to open document {existing_doc_id}.")
+            existing_doc_id = llm_response.belongs_to_open_doc_id # This ID is already a final, date-aware ID
+            print(f"Processor: Content from LLM Req ID {original_llm_request_id} (new final doc ID if it were new: {actual_doc_id}) belongs to open document {existing_doc_id}.")
 
             open_doc_entry = self.open_documents[existing_doc_id]
             existing_letter_data = open_doc_entry['letter_data']
@@ -151,20 +182,29 @@ class Processor:
             # Append current page's items (PIL images for PDF, or Path for image)
             open_doc_entry.setdefault('items_to_save', [])
             open_doc_entry.setdefault('preprocessed_ocr_images', []) # Ensure list exists
-            open_doc_entry.setdefault('raw_ocr_text_content', '') # Ensure raw OCR text content exists
+            open_doc_entry.setdefault('raw_ocr_text_content', '') 
+            open_doc_entry.setdefault('merged_page_constituent_infos', [])
 
             items_from_current_page: List[Union[Path, Image.Image]]
             if current_page_path.suffix.lower() == '.pdf':
-                items_from_current_page = images_to_process_pil # This is List[Image.Image]
+                items_from_current_page = images_to_process_pil
             else:
-                items_from_current_page = [current_page_path] # This is List[Path]
+                items_from_current_page = [current_page_path]
 
             open_doc_entry['items_to_save'].extend(items_from_current_page)
-            open_doc_entry['preprocessed_ocr_images'].extend(preprocessed_ocr_images_for_saving) # Append preprocessed images
-            open_doc_entry['raw_ocr_text_content'] += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{text_all}" # Append raw OCR text
+            open_doc_entry['preprocessed_ocr_images'].extend(preprocessed_ocr_images_for_saving)
+            # Use original_llm_request_id for page break markers, as it's the ID of this specific processed unit
+            open_doc_entry['raw_ocr_text_content'] += f"\n\n--- Page Break (Original Page ID: {original_llm_request_id}) ---\n\n{text_all}"
 
             # Append content (ensure newline separation)
-            existing_letter_data.content += f"\n\n--- Page Break (Original Page ID: {llm_response.id}) ---\n\n{llm_response.content}"
+            existing_letter_data.content += f"\n\n--- Page Break (Original Page ID: {original_llm_request_id}) ---\n\n{llm_response.content}"
+            
+            # Store info for LLM log consolidation
+            open_doc_entry['merged_page_constituent_infos'].append({
+                'request_id': original_llm_request_id, # ID used for the LLM call and initial log
+                'sender_folder_llm': _sanitize_foldername_llm(llm_response.sender if llm_response.sender else "UnknownSender_LLMLog")
+            })
+
             # Merge QR payloads (avoid duplicates)
             for qr in llm_response.qr_payloads:
                 if qr not in existing_letter_data.qr_payloads:
@@ -184,36 +224,30 @@ class Processor:
 
             if existing_letter_data.is_information_complete:
                 print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
-                items_to_save_list = open_doc_entry.get('items_to_save', [])
-                preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
-                raw_ocr_text_to_save = open_doc_entry.get('raw_ocr_text_content', '')
-                save_output(
-                    letter=existing_letter_data, 
-                    original_items=items_to_save_list, 
-                    settings=self.settings,
-                    preprocessed_ocr_images=preprocessed_images_list,
-                    raw_ocr_text=raw_ocr_text_to_save
-                )
-                del self.open_documents[existing_doc_id]
+                # Call the refactored save and close method
+                self._save_and_close_open_document(existing_doc_id, set_complete_true=False)
                 print(f"Successfully processed and closed multi-page document: {existing_doc_id}")
             else:
                 print(f"Processor: Document {existing_doc_id} updated, still awaiting more pages.")
 
         elif not llm_response.is_information_complete or llm_response.is_multipage_explicit:
             # This is a new multi-page document or the first page of one.
-            # The llm_response.id (which is candidate_page_id) becomes the ID for this new open document.
-            actual_doc_id = llm_response.id
-            print(f"Processor: Page {actual_doc_id} is part of a new multi-page document. Keeping it open.")
-            self.open_documents[actual_doc_id] = {
-                'letter_data': llm_response,
+            # llm_response.id is already the final actual_doc_id.
+            print(f"Processor: Document {llm_response.id} (from LLM Req ID {original_llm_request_id}) is part of a new multi-page document. Keeping it open.")
+            self.open_documents[llm_response.id] = {
+                'letter_data': llm_response, # llm_response.id is the actual_doc_id
                 'items_to_save': images_to_process_pil if current_page_path.suffix.lower() == '.pdf' else [current_page_path],
-                'preprocessed_ocr_images': preprocessed_ocr_images_for_saving, # Store preprocessed images
-                'raw_ocr_text_content': text_all # Store raw OCR text for this initial page(s)
+                'preprocessed_ocr_images': preprocessed_ocr_images_for_saving,
+                'raw_ocr_text_content': text_all, # Raw OCR for this first page/file
+                'merged_page_constituent_infos': [{ # Info for this first page's LLM log
+                    'request_id': original_llm_request_id,
+                    'sender_folder_llm': _sanitize_foldername_llm(llm_response.sender if llm_response.sender else "UnknownSender_LLMLog")
+                }]
             }
         else:
             # This is a single, complete document.
-            actual_doc_id = llm_response.id
-            print(f"Processor: Page {actual_doc_id} is a complete single-page document. Saving.")
+            # llm_response.id is already the final actual_doc_id.
+            print(f"Processor: Document {llm_response.id} (from LLM Req ID {original_llm_request_id}) is a complete single-page document. Saving.")
 
             items_for_saving_originals: List[Union[Path, Image.Image]]
             if current_page_path.suffix.lower() == '.pdf':
@@ -224,16 +258,76 @@ class Processor:
                 items_for_saving_originals = [current_page_path]
 
             save_output(
-                letter=llm_response, 
+                letter=llm_response, # llm_response.id is the actual_doc_id
                 original_items=items_for_saving_originals, 
                 settings=self.settings,
-                preprocessed_ocr_images=preprocessed_ocr_images_for_saving, # Pass preprocessed images
-                raw_ocr_text=text_all # Pass raw OCR text for this single document
+                preprocessed_ocr_images=preprocessed_ocr_images_for_saving,
+                raw_ocr_text=text_all # Pass raw OCR for this single document/file
             )
-            print(f"Successfully processed single-page document: {actual_doc_id}")
+            # Note: For single complete documents, LLM logs are under output_dir/sender_llm/llm_request_id/
+            # They are not moved/consolidated by _save_and_close_open_document as it's not an "open document".
+            # This is acceptable; the logs are still correctly associated with the initial processing.
+            print(f"Successfully processed single-page document: {llm_response.id}")
 
 
     # def check_open_document_timeouts(self): # Method entirely removed
+    
+    def _save_and_close_open_document(self, doc_id: str, set_complete_true: bool = False):
+        """
+        Core logic to save an open document's data and remove it from open_documents.
+        Optionally marks the document as 'is_information_complete'.
+        Moves LLM logs from constituent pages and cleans up their original folders.
+        """
+        open_doc_entry = self.open_documents[doc_id]
+        data_to_save = open_doc_entry['letter_data'] # This is the final LetterLLMResponse with final doc_id
+        items_to_save_list = open_doc_entry.get('items_to_save', [])
+        preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
+        raw_ocr_text_to_save = open_doc_entry.get('raw_ocr_text_content', '')
+
+        if set_complete_true:
+            data_to_save.is_information_complete = True
+        
+        # This call creates the final document folder (using data_to_save.id) and its primary artifacts
+        save_output(
+            letter=data_to_save, 
+            original_items=items_to_save_list, 
+            settings=self.settings,
+            preprocessed_ocr_images=preprocessed_images_list,
+            raw_ocr_text=raw_ocr_text_to_save
+        )
+
+        # Determine the final path structure used by save_output for the consolidated document
+        final_doc_main_sender_folder_save = _sanitize_foldername(data_to_save.sender if data_to_save.sender else "UnknownSender")
+        final_doc_root_dir_save = Path(self.settings.output_dir) / final_doc_main_sender_folder_save / data_to_save.id # data_to_save.id is the final doc_id
+        
+        final_target_llm_log_dir = final_doc_root_dir_save / "llm_interaction_logs" # Changed from "llm_interactions" to "llm_interaction_logs" to match llm.py
+        final_target_llm_log_dir.mkdir(parents=True, exist_ok=True)
+
+        # Consolidate LLM logs from all constituent pages
+        for constituent_page_info in open_doc_entry.get('merged_page_constituent_infos', []):
+            constituent_llm_request_id = constituent_page_info['request_id'] # This was the ID used for the LLM call
+            constituent_page_sender_folder_llm = constituent_page_info['sender_folder_llm']
+
+            # Path to the original folder where this constituent page's LLM logs were stored
+            source_page_root_folder_llm = Path(self.settings.output_dir) / constituent_page_sender_folder_llm / constituent_llm_request_id
+            source_llm_log_folder = source_page_root_folder_llm / "llm_interaction_logs" # Matches llm.py
+
+            if source_llm_log_folder.exists() and source_llm_log_folder.is_dir():
+                for log_file in source_llm_log_folder.iterdir():
+                    if log_file.is_file():
+                        try:
+                            shutil.move(str(log_file), str(final_target_llm_log_dir / log_file.name))
+                        except Exception as e:
+                            print(f"Error moving LLM log {log_file.name} from {source_llm_log_folder} to {final_target_llm_log_dir}: {e}")
+            
+            if source_page_root_folder_llm.resolve() != final_doc_root_dir_save.resolve():
+                if source_page_root_folder_llm.exists() and source_page_root_folder_llm.is_dir():
+                    try:
+                        shutil.rmtree(source_page_root_folder_llm)
+                    except Exception as e:
+                        print(f"Error deleting original folder for constituent page {source_page_root_folder_llm}: {e}")
+        
+        del self.open_documents[doc_id]
 
     def flush_open_documents(self):
         """Saves all currently open documents."""
@@ -244,21 +338,7 @@ class Processor:
             
         for doc_id in list(self.open_documents.keys()): 
             print(f"Processor: Flushing document {doc_id}.")
-            open_doc_entry = self.open_documents[doc_id]
-            data_to_save = open_doc_entry['letter_data']
-            items_to_save_list = open_doc_entry.get('items_to_save', [])
-            preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
-            raw_ocr_text_to_save = open_doc_entry.get('raw_ocr_text_content', '')
-
-            data_to_save.is_information_complete = True 
-            save_output(
-                letter=data_to_save, 
-                original_items=items_to_save_list, 
-                settings=self.settings,
-                preprocessed_ocr_images=preprocessed_images_list,
-                raw_ocr_text=raw_ocr_text_to_save
-            )
-            del self.open_documents[doc_id]
+            self._save_and_close_open_document(doc_id, set_complete_true=True) # Use helper
             print(f"Successfully flushed document: {doc_id}")
         print("Processor: All open documents flushed.")
 
@@ -282,21 +362,7 @@ class Processor:
         """Forces a specific open document to be considered complete, saves, and closes it."""
         if doc_id in self.open_documents:
             print(f"Processor: Force completing document {doc_id}.")
-            open_doc_entry = self.open_documents[doc_id]
-            data_to_save = open_doc_entry['letter_data']
-            items_to_save_list = open_doc_entry.get('items_to_save', [])
-            preprocessed_images_list = open_doc_entry.get('preprocessed_ocr_images', [])
-            raw_ocr_text_to_save = open_doc_entry.get('raw_ocr_text_content', '')
-
-            data_to_save.is_information_complete = True # Mark as complete by user action
-            save_output(
-                letter=data_to_save, 
-                original_items=items_to_save_list, 
-                settings=self.settings,
-                preprocessed_ocr_images=preprocessed_images_list,
-                raw_ocr_text=raw_ocr_text_to_save
-            )
-            del self.open_documents[doc_id]
+            self._save_and_close_open_document(doc_id, set_complete_true=True) # Use helper
             print(f"Successfully force-completed and closed document: {doc_id}")
             return True
         else:
