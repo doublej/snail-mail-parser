@@ -14,8 +14,8 @@ import numpy as np # For type hinting preprocessed images
 
 from ocr import ocr_image  # ocr_image now returns text, confidence, and preprocessed_image
 from qr import scan_qr
-from llm import classify_document, LetterLLMResponse, DocumentType # Added DocumentType for Enum check
-from output import save_output
+from llm import classify_document, LetterLLMResponse, DocumentType, _sanitize_foldername_llm # Added _sanitize_foldername_llm
+from output import save_output, _sanitize_foldername # Added _sanitize_foldername
 import navigator # Added for merge operation
 from enum import Enum # Added for Enum check
 
