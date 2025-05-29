@@ -226,7 +226,7 @@ class Processor:
                 print(f"Processor: Document {existing_doc_id} now considered complete. Saving.")
                 # Call the refactored save and close method
                 self._save_and_close_open_document(existing_doc_id, set_complete_true=False)
-                print(f"Successfully processed and closed multi-page document: {existing_doc_id}")
+                print(f"Processor: Successfully processed and closed multi-page document: {existing_doc_id}")
             else:
                 print(f"Processor: Document {existing_doc_id} updated, still awaiting more pages.")
 
@@ -267,7 +267,7 @@ class Processor:
             # Note: For single complete documents, LLM logs are under output_dir/sender_llm/llm_request_id/
             # They are not moved/consolidated by _save_and_close_open_document as it's not an "open document".
             # This is acceptable; the logs are still correctly associated with the initial processing.
-            print(f"Successfully processed single-page document: {llm_response.id}")
+            print(f"Processor: Successfully processed single-page document: {llm_response.id}")
 
 
     # def check_open_document_timeouts(self): # Method entirely removed
