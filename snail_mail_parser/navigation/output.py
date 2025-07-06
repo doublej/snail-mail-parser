@@ -1,5 +1,5 @@
 from ruamel.yaml import YAML
-from llm import LetterLLMResponse, DocumentType
+from snail_mail_parser.ai.llm import LetterLLMResponse, DocumentType
 from enum import Enum
 import re
 import shutil

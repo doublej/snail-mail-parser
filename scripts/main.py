@@ -4,9 +4,9 @@ import logging
 import time
 from queue import Queue
 
-from settings import Settings
-from watcher import FolderWatcher
-from processor import Processor
+from snail_mail_parser.core.settings import Settings
+from snail_mail_parser.utils.watcher import FolderWatcher
+from snail_mail_parser.core.processor import Processor
 
 def main():
     # Configure logging

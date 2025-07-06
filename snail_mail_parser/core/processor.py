@@ -12,11 +12,11 @@ from PIL import Image # Added for handling image files consistently
 import pytesseract # Added for direct OCR on PIL Image
 import numpy as np # For type hinting preprocessed images
 
-from ocr import ocr_image  # ocr_image now returns text, confidence, and preprocessed_image
-from qr import scan_qr
-from llm import classify_document, LetterLLMResponse, DocumentType, _sanitize_foldername_llm # Added _sanitize_foldername_llm
-from output import save_output, _sanitize_foldername # Added _sanitize_foldername
-import navigator # Added for merge operation
+from snail_mail_parser.document.ocr import ocr_image  # ocr_image now returns text, confidence, and preprocessed_image
+from snail_mail_parser.document.qr import scan_qr
+from snail_mail_parser.ai.llm import classify_document, LetterLLMResponse, DocumentType, _sanitize_foldername_llm # Added _sanitize_foldername_llm
+from snail_mail_parser.navigation.output import save_output, _sanitize_foldername # Added _sanitize_foldername
+from snail_mail_parser.navigation import navigator # Added for merge operation
 from enum import Enum # Added for Enum check
 
 class Processor:
@@ -399,7 +399,7 @@ class Processor:
                  source_yaml_data["type"] = DocumentType(source_type_str)
             # Same for payment if it's a dict
             if isinstance(source_yaml_data.get("payment"), dict):
-                from llm import Payment # Local import for pydantic model if not globally available
+                from snail_mail_parser.ai.llm import Payment # Local import for pydantic model if not globally available
                 source_yaml_data["payment"] = Payment.model_validate(source_yaml_data["payment"])
 
             source_letter = LetterLLMResponse.model_validate(source_yaml_data)

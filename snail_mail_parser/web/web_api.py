@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import List, Dict, Any
 import os 
 
-from settings import Settings
-import navigator
-from processor import Processor # Added
+from snail_mail_parser.core.settings import Settings
+from snail_mail_parser.navigation import navigator
+from snail_mail_parser.core.processor import Processor # Added
 from queue import Queue # Added
 from pydantic import BaseModel as FastAPIBaseModel # Alias to avoid clash with our LetterLLMResponse
 
