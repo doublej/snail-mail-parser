@@ -1,38 +1,39 @@
-from pathlib import Path
-from typing import Tuple, List # Added List
+from typing import Tuple # Added List
 from PIL import Image
 import pytesseract
 
 import cv2
 import numpy as np
-from PIL import Image, ImageFilter, ImageOps
-from matplotlib import pyplot as plt
 
 
 def display_image(title, image):
+    """Debug function to display images - requires matplotlib if used."""
+    try:
+        from matplotlib import pyplot as plt
+        
+        # Get image dimensions (height, width)
+        if len(image.shape) == 2:  # Grayscale
+            img_height, img_width = image.shape
+        else:  # Color
+            img_height, img_width, _ = image.shape
 
+        # Get DPI for the figure
+        dpi = plt.rcParams['figure.dpi']
 
-    # Get image dimensions (height, width)
-    if len(image.shape) == 2:  # Grayscale
-        img_height, img_width = image.shape
-    else:  # Color
-        img_height, img_width, _ = image.shape
+        # Calculate figure size in inches
+        figsize_width = img_width / dpi
+        figsize_height = img_height / dpi
 
-    # Get DPI for the figure
-    dpi = plt.rcParams['figure.dpi']
-
-    # Calculate figure size in inches
-    figsize_width = img_width / dpi
-    figsize_height = img_height / dpi
-
-    plt.figure(figsize=(figsize_width, figsize_height))
-    if len(image.shape) == 2:  # Grayscale
-        plt.imshow(image, cmap='gray')
-    else:  # Color
-        plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-    plt.title(title)
-    plt.axis('off')
-    plt.show()
+        plt.figure(figsize=(figsize_width, figsize_height))
+        if len(image.shape) == 2:  # Grayscale
+            plt.imshow(image, cmap='gray')
+        else:  # Color
+            plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        plt.title(title)
+        plt.axis('off')
+        plt.show()
+    except ImportError:
+        print(f"matplotlib not available, cannot display image: {title}")
 
 
 def preprocess_image_for_ocr(pil_image):

@@ -1,15 +1,13 @@
 import io
-import traceback
 from datetime import datetime
 from queue import Queue
 # import time # No longer needed for last_seen_timestamp
 import shutil # Added for rmtree in merge operation
 from pathlib import Path # Added for merge operation
-from typing import List, Dict, Any, Tuple, Union, Optional  # For type hints
+from typing import List, Dict, Any, Union, Optional  # For type hints
 
 import fitz
 from PIL import Image # Added for handling image files consistently
-import pytesseract # Added for direct OCR on PIL Image
 import numpy as np # For type hinting preprocessed images
 
 from snail_mail_parser.document.ocr import ocr_image  # ocr_image now returns text, confidence, and preprocessed_image

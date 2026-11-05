@@ -1,5 +1,5 @@
 from ruamel.yaml import YAML
-from snail_mail_parser.ai.llm import LetterLLMResponse, DocumentType
+from snail_mail_parser.ai.llm import LetterLLMResponse
 from enum import Enum
 import re
 import shutil
@@ -223,9 +223,9 @@ def save_output(
         md_lines.append(f"  amount: {letter.payment.amount if letter.payment.amount is not None else 'None'}")
         md_lines.append(f"  due_date: {letter.payment.due_date if letter.payment.due_date is not None else 'None'}")
     else:
-        md_lines.append(f"  iban: None")
-        md_lines.append(f"  amount: None")
-        md_lines.append(f"  due_date: None")
+        md_lines.append("  iban: None")
+        md_lines.append("  amount: None")
+        md_lines.append("  due_date: None")
 
     # Add multi-page fields to Markdown metadata
     md_lines.append(f"is_multipage_explicit: {letter.is_multipage_explicit}")
